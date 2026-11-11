@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 
 CONFIG = {
+    'ollama': (None, 'http://127.0.0.1:11434/v1/chat/completions'),
     'openai': ('OPENAI_API_KEY', 'https://api.openai.com/v1/chat/completions'),
     'gemini': ('GEMINI_API_KEY', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
     'openrouter': ('OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions'),
@@ -37,8 +38,11 @@ class Provider:
             raise ValueError('Cần đặt MODEL là model có hỗ trợ tool calling.')
         self.name, self.model = name, model
         key_name, self.url = CONFIG[name]
-        self.key = os.getenv(key_name)
-        if not self.key:
+        #self.key = os.getenv(key_name)
+        #if not self.key:
+        #    raise ValueError(f'Thiếu {key_name}; xem README.md.')
+        self.key = os.getenv(key_name) if key_name else None
+        if key_name and not self.key:
             raise ValueError(f'Thiếu {key_name}; xem README.md.')
 
     def complete(self, messages, schemas):
@@ -47,7 +51,31 @@ class Provider:
         payload = {'model': self.model, 'messages': messages}
         if schemas:
             payload['tools'] = schemas
-        data = post_json(self.url, {'Authorization': f'Bearer {self.key}'}, payload)
+        elif self.name == 'ollama':
+            score_limits = {'factuality': 40, 'completeness': 25, 'evidence': 20, 'boundaries': 15}
+            properties = {
+                name: {'type': 'integer', 'enum': list(range(limit + 1))}
+                for name, limit in score_limits.items()
+            }
+            properties['reason'] = {'type': 'string'}
+            properties['improvement'] = {'type': 'string'}
+            payload['response_format'] = {
+                'type': 'json_schema',
+                'json_schema': {
+                    'name': 'lab_grade',
+                    'schema': {
+                        'type': 'object',
+                        'properties': properties,
+                        'required': list(properties),
+                        'additionalProperties': False,
+                    },
+                },
+            }
+            payload['reasoning_effort'] = 'none'
+            payload['temperature'] = 0
+        #data = post_json(self.url, {'Authorization': f'Bearer {self.key}'}, payload)
+        headers = {'Authorization': f'Bearer {self.key}'} if self.key else {}
+        data = post_json(self.url, headers, payload)
         choice = data['choices'][0]
         message = choice['message']
         calls = [{'id': c['id'], 'name': c['function']['name'], 'arguments': c['function']['arguments']} for c in message.get('tool_calls', [])]
